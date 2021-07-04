@@ -25,6 +25,7 @@ final_path=$(ynh_app_setting_get --app=$app --key=final_path)
 admin_token=$(ynh_app_setting_get --app=$app --key=admin_token)
 rocket_port=$(ynh_app_setting_get --app=$app --key=rocket_port)
 websocket_port=$(ynh_app_setting_get --app=$app --key=websocket_port)
+datadir=$(ynh_app_setting_get --app=$app --key=datadir)
 
 #=================================================
 # CHECK VERSION
@@ -47,8 +48,6 @@ ynh_clean_setup () {
 }
 # Exit if an error occurs during the execution of the script
 ynh_abort_if_errors
-
-ynh_remove_logrotate
 
 #=================================================
 # STANDARD UPGRADE STEPS
@@ -113,12 +112,46 @@ if ! ynh_permission_exists --permission="api"; then
 fi
 
 #=================================================
+# ENSURE DOWNWARD COMPATIBILITY
+#=================================================
+ynh_script_progression --message="Ensuring downward compatibility..."
+
+if [ -z "$datadir" ]; then
+	datadir=/home/yunohost.app/$app
+	mv $final_path/live/data $datadir
+	ynh_app_setting_set --app=$app --key=datadir --value=$datadir
+	
+	chmod 750 "$datadir"
+	chmod -R o-rwx "$datadir"
+	chown -R $app:$app "$datadir"
+fi
+
+# Cleaning legacy permissions
+if ynh_legacy_permissions_exists; then
+	ynh_legacy_permissions_delete_all
+
+	ynh_app_setting_delete --app=$app --key=is_public
+fi
+
+if ! ynh_permission_exists --permission="admin"; then
+	# Create the required permissions
+	ynh_permission_create --permission="admin" --url="/admin" --allowed=$admin --show_tile="false"
+fi
+
+# Create a permission if needed
+if ! ynh_permission_exists --permission="api"; then
+	ynh_permission_create --permission="api" --url="/api" --additional_urls="/identity/connect/token" --allowed="visitors" --auth_header="false" --show_tile="false" --protected="true"
+fi
+
+ynh_remove_logrotate
+
+#=================================================
 # CREATE DEDICATED USER
 #=================================================
 ynh_script_progression --message="Making sure dedicated system user exists..."
 
 # Create a dedicated user (if not existing)
-ynh_system_user_create --username=$app --home_dir="$final_path"
+ynh_system_user_create --username=$app --home_dir=$final_path
 
 #=================================================
 # DOWNLOAD, CHECK AND UNPACK SOURCE
@@ -145,7 +178,7 @@ chown -R $app:$app "$final_path"
 ynh_script_progression --message="Upgrading NGINX web server configuration..."
 
 # Create a dedicated NGINX config
-ynh_add_nginx_config "websocket_port rocket_port"
+ynh_add_nginx_config
 
 #=================================================
 # UPGRADE DEPENDENCIES
